@@ -6,24 +6,42 @@ import (
 	"arkis_test/queue"
 	"context"
 	"os"
+	"os/signal"
+	"sync"
 
 	log "github.com/sirupsen/logrus"
 )
 
 func main() {
-	ctx := context.Background()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Kill, os.Interrupt)
+	defer cancel()
 
-	inputQueue, err := queue.New(os.Getenv("RABBITMQ_URL"), "input-A")
-	if err != nil {
-		log.WithError(err).Panic("Cannot create input queue")
-	}
+	wg := sync.WaitGroup{}
 
-	outputQueue, err := queue.New(os.Getenv("RABBITMQ_URL"), "output-A")
-	if err != nil {
-		log.WithError(err).Panic("Cannot create output queue")
+	for _, config := range []struct {
+		inputQueue  string
+		outputQueue string
+	}{
+		{inputQueue: "input-A", outputQueue: "output-A"},
+		{inputQueue: "input-B", outputQueue: "output-B"},
+	} {
+		inputQueue, err := queue.New(os.Getenv("RABBITMQ_URL"), config.inputQueue)
+		if err != nil {
+			log.WithError(err).Panic("Cannot create input queue")
+		}
+
+		outputQueue, err := queue.New(os.Getenv("RABBITMQ_URL"), config.outputQueue)
+		if err != nil {
+			log.WithError(err).Panic("Cannot create output queue")
+		}
+
+		wg.Add(1)
+		go func() {
+			processor.New(inputQueue, outputQueue, database.D{}).Run(ctx)
+			wg.Done()
+		}()
 	}
 
 	log.Info("Application is ready to run")
-
-	processor.New(inputQueue, outputQueue, database.D{}).Run(ctx)
+	wg.Wait()
 }
